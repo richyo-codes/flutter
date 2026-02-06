@@ -138,15 +138,11 @@ G_MODULE_EXPORT FlWindowMonitor* fl_window_monitor_new(
   g_signal_connect_swapped(gtk_widget_get_window(GTK_WIDGET(window)),
                            "moved-to-rect", G_CALLBACK(moved_to_rect_cb), self);
 #if FLUTTER_LINUX_GTK4
-  g_signal_connect(window, "close-request", G_CALLBACK(close_request_cb), self);
-#else
-#if FLUTTER_LINUX_GTK4
   g_signal_connect_swapped(window, "close-request",
                            G_CALLBACK(close_request_cb), self);
 #else
   g_signal_connect_swapped(window, "delete-event", G_CALLBACK(delete_event_cb),
                            self);
-#endif
 #endif
   g_signal_connect_swapped(window, "destroy", G_CALLBACK(destroy_cb), self);
 

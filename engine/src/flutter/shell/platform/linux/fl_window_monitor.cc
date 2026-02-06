@@ -70,7 +70,7 @@ static void moved_to_rect_cb(FlWindowMonitor* self,
 static gboolean close_request_cb(FlWindowMonitor* self) {
   flutter::IsolateScope scope(self->isolate);
   self->on_close();
-  return TRUE;
+  return FALSE;
 }
 #else
 static gboolean delete_event_cb(FlWindowMonitor* self, GdkEvent* event) {

@@ -15,6 +15,7 @@
 #include "flutter/shell/platform/linux/fl_compositor_opengl.h"
 #include "flutter/shell/platform/linux/fl_compositor_software.h"
 #include "flutter/shell/platform/linux/fl_engine_private.h"
+#include "flutter/shell/platform/linux/fl_gtk.h"
 #include "flutter/shell/platform/linux/fl_key_event.h"
 #include "flutter/shell/platform/linux/fl_opengl_manager.h"
 #include "flutter/shell/platform/linux/fl_plugin_registrar_private.h"
@@ -183,11 +184,11 @@ static void cursor_changed_cb(FlView* self) {
   FlMouseCursorHandler* handler =
       fl_engine_get_mouse_cursor_handler(self->engine);
   const gchar* cursor_name = fl_mouse_cursor_handler_get_cursor_name(handler);
-  GdkWindow* window =
-      gtk_widget_get_window(gtk_widget_get_toplevel(GTK_WIDGET(self)));
+  FlGdkSurface* window =
+      fl_gtk_widget_get_surface(gtk_widget_get_toplevel(GTK_WIDGET(self)));
   g_autoptr(GdkCursor) cursor =
-      gdk_cursor_new_from_name(gdk_window_get_display(window), cursor_name);
-  gdk_window_set_cursor(window, cursor);
+      gdk_cursor_new_from_name(fl_gtk_surface_get_display(window), cursor_name);
+  fl_gtk_surface_set_cursor(window, cursor);
 }
 
 // Set the mouse cursor.
@@ -216,8 +217,8 @@ static void handle_geometry_changed(FlView* self) {
   // has changed, so moving between two monitors of the same scale doesn't
   // provide any information.
 
-  GdkWindow* window =
-      gtk_widget_get_window(gtk_widget_get_toplevel(GTK_WIDGET(self)));
+  FlGdkSurface* window =
+      fl_gtk_widget_get_surface(gtk_widget_get_toplevel(GTK_WIDGET(self)));
   // NOTE(robert-ancell) If we haven't got a window we default to display 0.
   // This is probably indicating a problem with this code in that we
   // shouldn't be generating anything until the window is created.
@@ -227,7 +228,7 @@ static void handle_geometry_changed(FlView* self) {
   // added but only when the window is realized.
   FlutterEngineDisplayId display_id = 0;
   if (window != nullptr) {
-    GdkMonitor* monitor = gdk_display_get_monitor_at_window(
+    GdkMonitor* monitor = fl_gtk_display_get_monitor_at_surface(
         gtk_widget_get_display(GTK_WIDGET(self)), window);
     display_id = fl_display_monitor_get_display_id(
         fl_engine_get_display_monitor(self->engine), monitor);
@@ -467,8 +468,8 @@ static void gesture_zoom_end_cb(FlView* self) {
 static void setup_opengl(FlView* self) {
   g_autoptr(GError) error = nullptr;
 
-  self->render_context = gdk_window_create_gl_context(
-      gtk_widget_get_window(GTK_WIDGET(self->render_area)), &error);
+  self->render_context = fl_gtk_surface_create_gl_context(
+      fl_gtk_widget_get_surface(GTK_WIDGET(self->render_area)), &error);
   if (self->render_context == nullptr) {
     g_warning("Failed to create OpenGL context: %s", error->message);
     return;
@@ -562,7 +563,8 @@ static gboolean draw_cb(FlView* self, cairo_t* cr) {
   gboolean wait_for_frame = !self->sized_to_content;
   gboolean result = fl_compositor_render(
       self->compositor, cr,
-      gtk_widget_get_window(GTK_WIDGET(self->render_area)), wait_for_frame);
+      fl_gtk_widget_get_surface(GTK_WIDGET(self->render_area)),
+      wait_for_frame);
 
   if (self->render_context) {
     gdk_gl_context_clear_current();

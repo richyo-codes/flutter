@@ -1088,10 +1088,21 @@ void main() {
   testUsingContext(descAppLinux, () async {
     final command = CreateCommand();
     final CommandRunner<void> runner = createTestCommandRunner(command);
-
     await runner.run(<String>['create', '--no-pub', '--platform=linux', projectDir.path]);
 
     expect(projectDir.childDirectory('linux').childFile('CMakeLists.txt'), exists);
+    expect(
+      projectDir.childDirectory('linux').childFile('CMakeLists.txt').readAsStringSync(),
+      contains('pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk4)'),
+    );
+    expect(
+      projectDir
+          .childDirectory('linux')
+          .childDirectory('flutter')
+          .childFile('CMakeLists.txt')
+          .readAsStringSync(),
+      contains('FLUTTER_LINUX_GTK4'),
+    );
     expect(projectDir.childDirectory('android'), isNot(exists));
     expect(projectDir.childDirectory('ios'), isNot(exists));
     expect(projectDir.childDirectory('windows'), isNot(exists));
@@ -1099,6 +1110,37 @@ void main() {
     expect(projectDir.childDirectory('web'), isNot(exists));
     expect(logger.errorText, isNot(contains(_kNoPlatformsMessage)));
   }, overrides: overridesLinux);
+
+  testUsingContext(
+    'app supports Linux GTK3 if requested',
+    () async {
+      final command = CreateCommand();
+      final CommandRunner<void> runner = createTestCommandRunner(command);
+
+      await runner.run(<String>[
+        'create',
+        '--no-pub',
+        '--platform=linux',
+        '--linux-gtk=gtk3',
+        projectDir.path,
+      ]);
+
+      expect(projectDir.childDirectory('linux').childFile('CMakeLists.txt'), exists);
+      expect(
+        projectDir.childDirectory('linux').childFile('CMakeLists.txt').readAsStringSync(),
+        contains('pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)'),
+      );
+      expect(
+        projectDir
+            .childDirectory('linux')
+            .childDirectory('flutter')
+            .childFile('CMakeLists.txt')
+            .readAsStringSync(),
+        contains('FLUTTER_LINUX_GTK3'),
+      );
+    },
+    overrides: {FeatureFlags: () => TestFeatureFlags(isLinuxEnabled: true), Logger: () => logger},
+  );
 
   const descPluginLinux = 'plugin supports Linux if requested';
   testUsingContext(descPluginLinux, () async {
@@ -1114,6 +1156,14 @@ void main() {
     ]);
 
     expect(projectDir.childDirectory('linux').childFile('CMakeLists.txt'), exists);
+    expect(
+      projectDir
+          .childDirectory('example')
+          .childDirectory('linux')
+          .childFile('CMakeLists.txt')
+          .readAsStringSync(),
+      contains('pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk4)'),
+    );
     expect(projectDir.childDirectory('example').childDirectory('linux'), exists);
     expect(projectDir.childDirectory('example').childDirectory('android'), isNot(exists));
     expect(projectDir.childDirectory('example').childDirectory('ios'), isNot(exists));

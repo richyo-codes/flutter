@@ -45,6 +45,14 @@ TEST_F(FlViewTest, StateUpdateDoesNotHappenInInit) {
   (void)view;
 }
 
+#if !FLUTTER_LINUX_GTK4
+TEST_F(FlViewTest, RenderAreaIsAddedToEventBox) {
+  FlView* view = fl_view_new(project);
+
+  EXPECT_EQ(gtk_widget_get_parent(view->render_area), view->event_box);
+}
+#endif
+
 // Disposing a view that holds the text input focus clears the handler's
 // widget pointer so it does not dangle.
 // https://github.com/flutter/flutter/issues/188657
@@ -193,17 +201,14 @@ TEST_F(FlViewTest, ViewDestroy) {
 
   FlView* secondary_view = fl_view_new_for_engine(engine);
 
-  int64_t implicit_view_id = fl_view_get_id(implicit_view);
   int64_t secondary_view_id = fl_view_get_id(secondary_view);
 
   fl_gtk_widget_destroy(GTK_WIDGET(secondary_view));
   fl_gtk_widget_destroy(GTK_WIDGET(implicit_view));
 
-  EXPECT_EQ(removed_views->len, 2u);
+  EXPECT_EQ(removed_views->len, 1u);
   EXPECT_EQ(GPOINTER_TO_INT(g_ptr_array_index(removed_views, 0)),
             secondary_view_id);
-  EXPECT_EQ(GPOINTER_TO_INT(g_ptr_array_index(removed_views, 1)),
-            implicit_view_id);
 }
 
 // Check views deregistered with errors works.

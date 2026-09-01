@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "flutter/shell/platform/linux/fl_accessibility_semantics_store.h"
+#include "flutter/shell/platform/linux/fl_glib_compat.h"
 
 #include <cstring>
 
@@ -22,7 +23,9 @@ static void fl_accessibility_semantics_node_free(gpointer data) {
   FlAccessibilitySemanticsNode* node =
       static_cast<FlAccessibilitySemanticsNode*>(data);
   g_free(node->label);
+  g_free(node->hint);
   g_free(node->value);
+  g_free(node->tooltip);
   g_free(node->children_in_traversal_order);
   g_free(node);
 }
@@ -32,7 +35,9 @@ static FlAccessibilitySemanticsNode* fl_accessibility_semantics_node_new(
   FlAccessibilitySemanticsNode* node = g_new0(FlAccessibilitySemanticsNode, 1);
   node->id = semantics->id;
   node->label = g_strdup(semantics->label);
+  node->hint = g_strdup(semantics->hint);
   node->value = g_strdup(semantics->value);
+  node->tooltip = g_strdup(semantics->tooltip);
   if (semantics->flags2 != nullptr) {
     node->flags = *semantics->flags2;
   } else {
@@ -48,9 +53,10 @@ static FlAccessibilitySemanticsNode* fl_accessibility_semantics_node_new(
   if (semantics->child_count > 0 &&
       semantics->children_in_traversal_order != nullptr) {
     node->children_in_traversal_order = static_cast<int32_t*>(
-        g_memdup(semantics->children_in_traversal_order,
-                 sizeof(int32_t) * semantics->child_count));
+        g_memdup2(semantics->children_in_traversal_order,
+                  sizeof(int32_t) * semantics->child_count));
   }
+  node->heading_level = semantics->heading_level;
 
   return node;
 }

@@ -46,6 +46,9 @@ The Linux GTK variant is selected at build time through the toolchain, with
 For native popup and multi-window demos, see
 [Linux Native Popup And Multi-Window API](linux-popup-windowing.md).
 
+For GTK3 and GTK4 compositor, texture interop, DMA-BUF, and readback behavior,
+see [Linux GTK Rendering Paths](linux-gtk-rendering.md).
+
 Supported inputs on this branch:
 
 ```yaml

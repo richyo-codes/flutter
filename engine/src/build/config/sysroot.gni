@@ -14,10 +14,9 @@ declare_args() {
   # sysroot isn't set.
   use_default_linux_sysroot = true
 
-  # Select the Linux x64 sysroot variant.
-  # Keep trixie as the default on amd64, but allow switching back to bullseye
-  # for comparison or compatibility testing.
-  linux_x64_sysroot_variant = "trixie"
+  # Select the Linux x64 sysroot variant. Keep Bullseye as the default for
+  # compatibility; Trixie remains available for explicit testing.
+  linux_x64_sysroot_variant = "bullseye"
 }
 
 if (current_toolchain == default_toolchain && target_sysroot != "") {

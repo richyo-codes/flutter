@@ -103,7 +103,7 @@ void main() {
     await commandRunner.run(<String>[
       'assemble',
       '-o Output',
-      '--dart-define=FLUTTER_LINUX_GTK=gtk4',
+      '--dart-define=${base64.encode(utf8.encode('FLUTTER_LINUX_GTK=gtk4'))}',
       'debug_macos_bundle_flutter_assets',
     ]);
 
@@ -398,39 +398,28 @@ void main() {
     );
   });
 
-  testWithoutContext(
-    'flutter assemble does not inject engine revision with local-engine',
-    () async {
-      final localArtifacts = Artifacts.testLocalEngine(
-        localEngine: 'out/host_release',
-        localEngineHost: 'out/host_release',
-      );
-      final localToolContext = FakeToolContext(
-        artifacts: localArtifacts,
-        cache: cache,
-        fs: fileSystem,
-        logger: logger,
-        processManager: FakeProcessManager.any(),
-      );
-      final CommandRunner<void> commandRunner = createTestCommandRunner(
-        AssembleCommand(
-          featureFlags: TestFeatureFlags(),
-          buildSystem: TestBuildSystem.all(BuildResult(success: true), (
-            Target target,
-            Environment environment,
-          ) {
-            expect(environment.engineVersion, isNull);
-          }),
-          toolContext: localToolContext,
-        ),
-      );
-      await commandRunner.run(<String>[
-        'assemble',
-        '-o Output',
-        'debug_macos_bundle_flutter_assets',
-      ]);
-    },
-  );
+  testWithoutContext('flutter assemble uses locally selected artifacts', () async {
+    final localArtifacts = Artifacts.testLocalEngine(
+      localEngine: 'out/host_release',
+      localEngineHost: 'out/host_release',
+    );
+    late AssembleCommand command;
+    final CommandRunner<void> commandRunner = createTestCommandRunner(
+      command = AssembleCommand(
+        featureFlags: TestFeatureFlags(),
+        buildSystem: TestBuildSystem.all(BuildResult(success: true), (
+          Target target,
+          Environment environment,
+        ) {
+          expect(environment.artifacts, same(localArtifacts));
+          expect(environment.engineVersion, isNull);
+        }),
+        toolContext: toolContext,
+      ),
+    );
+    command.setArtifactsOverride(localArtifacts);
+    await commandRunner.run(<String>['assemble', '-o Output', 'debug_macos_bundle_flutter_assets']);
+  });
 
   testWithoutContext(
     'flutter assemble only writes input and output files when the values change',

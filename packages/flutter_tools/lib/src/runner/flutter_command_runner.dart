@@ -31,6 +31,7 @@ import '../resident_runner.dart';
 import '../tester/flutter_tester.dart';
 import '../version.dart';
 import '../web/web_device.dart';
+import 'flutter_command.dart';
 import 'local_engine.dart';
 
 /// Common flutter command line options.
@@ -562,9 +563,12 @@ class FlutterCommandRunner extends CommandRunner<void> {
       packagePath: topLevelResults[FlutterGlobalOptions.kPackagesOption] as String?,
     );
     if (engineBuildPaths != null) {
-      contextOverrides.addAll(<Type, Object?>{
-        Artifacts: Artifacts.getLocalEngine(engineBuildPaths),
-      });
+      final Artifacts localArtifacts = Artifacts.getLocalEngine(engineBuildPaths);
+      contextOverrides.addAll(<Type, Object?>{Artifacts: localArtifacts});
+      final FlutterCommand? command = _selectedFlutterCommand(topLevelResults);
+      if (command != null) {
+        command.setArtifactsOverride(localArtifacts);
+      }
     }
 
     await context.run<void>(
@@ -635,6 +639,23 @@ class FlutterCommandRunner extends CommandRunner<void> {
         await super.runCommand(topLevelResults);
       },
     );
+  }
+
+  FlutterCommand? _selectedFlutterCommand(ArgResults results) {
+    Command<void>? command;
+    ArgResults? commandResults = results.command;
+    while (commandResults != null) {
+      final String? commandName = commandResults.name;
+      if (commandName == null) {
+        return null;
+      }
+      command = command == null ? commands[commandName] : command.subcommands[commandName];
+      if (command == null) {
+        return null;
+      }
+      commandResults = commandResults.command;
+    }
+    return command is FlutterCommand ? command : null;
   }
 
   /// Get the root directories of the repo - the directories containing Dart packages.

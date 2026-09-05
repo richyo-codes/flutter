@@ -9,6 +9,7 @@ import 'package:package_config/package_config_types.dart';
 import 'package:unified_analytics/unified_analytics.dart';
 
 import '../application_package.dart';
+import '../artifacts.dart';
 import '../base/common.dart';
 import '../base/config.dart';
 import '../base/context.dart';
@@ -194,9 +195,26 @@ abstract class FlutterCommand extends Command<void> {
 
   final ToolContext? _explicitToolContext;
   final OutputPreferences? _outputPreferences;
+  Artifacts? _artifactsOverride;
 
   /// The [ToolContext] providing explicit dependency injection for this command.
   ToolContext? get toolContext => _explicitToolContext ?? runner?.toolContext;
+
+  /// Artifacts selected for this command invocation.
+  ///
+  /// Local engine artifacts are determined after command objects are created,
+  /// so they cannot be read solely from the injected [ToolContext].
+  @protected
+  Artifacts get effectiveArtifacts =>
+      _artifactsOverride ?? toolContext?.artifacts ?? globals.artifacts!;
+
+  /// Updates the artifacts selected by global command-line options.
+  ///
+  /// This is invoked by [FlutterCommandRunner] after it resolves a local
+  /// engine and before command execution begins.
+  void setArtifactsOverride(Artifacts artifacts) {
+    _artifactsOverride = artifacts;
+  }
 
   SystemClock get _clock => _explicitToolContext?.systemClock ?? globals.systemClock;
   Logger get _logger => _explicitToolContext?.logger ?? globals.logger;

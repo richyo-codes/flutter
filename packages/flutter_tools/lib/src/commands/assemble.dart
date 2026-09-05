@@ -265,7 +265,7 @@ class AssembleCommand extends FlutterCommand {
     if (fs.path.isRelative(output)) {
       output = fs.path.join(project.directory.path, output);
     }
-    final Artifacts artifacts = _toolContext.artifacts;
+    final Artifacts artifacts = effectiveArtifacts;
 
     List<String> decodedDefines;
     try {

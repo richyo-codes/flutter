@@ -85,6 +85,7 @@ source_set("flutter_linux_sources") {
   public = _public_headers + [
              "fl_binary_messenger_private.h",
              "fl_engine_private.h",
+             "fl_gtk3_runtime_api.h",
              "fl_key_channel_responder.h",
              "fl_key_embedder_responder.h",
              "fl_key_event.h",
@@ -130,6 +131,7 @@ source_set("flutter_linux_sources") {
     "fl_framebuffer.cc",
     "fl_gl_fence.cc",
     "fl_gnome_settings.cc",
+    "fl_gtk3_runtime_api.cc",
     "fl_json_message_codec.cc",
     "fl_json_method_codec.cc",
     "fl_key_channel_responder.cc",
@@ -195,6 +197,9 @@ source_set("flutter_linux_sources") {
     "FLUTTER_ENGINE_NO_PROTOTYPES",
   ]
 
+  # dlsym still requires libdl on the Bullseye baseline.
+  libs = [ "dl" ]
+
   deps = [
     "$dart_src/runtime:dart_api",
     "//flutter/fml",
@@ -251,6 +256,7 @@ executable("flutter_linux_unittests") {
     "fl_framebuffer_test.cc",
     "fl_gl_fence_test.cc",
     "fl_gnome_settings_test.cc",
+    "fl_gtk3_runtime_api_test.cc",
     "fl_json_message_codec_test.cc",
     "fl_json_method_codec_test.cc",
     "fl_key_channel_responder_test.cc",

@@ -24,6 +24,7 @@ import 'package:flutter/rendering.dart';
 
 import '../foundation/_features.dart';
 import '_window.dart';
+import '_window_linux_color.dart';
 import '_window_linux_native.dart';
 import '_window_positioner.dart';
 import 'binding.dart';
@@ -1711,24 +1712,12 @@ class _FlEngine extends _GObject {
   factory _FlEngine.current() => _FlEngine(WidgetsBinding.instance.platformDispatcher.engineId!);
 }
 
-/// Matches GTK3's GdkRGBA struct in gdk/gdkrgba.h.
-///
-/// GTK4 uses float components instead of double components. The identical
-/// native type name does not imply a compatible FFI layout; this structure
-/// must match the toolkit used by the native background-color setter.
-final class _GdkRGBA extends ffi.Struct {
-  @ffi.Double()
-  external double red;
+// GTK3 and GTK4 both export this function. Do not infer the native GdkRGBA
+// layout from the Dart package version or from a GTK4-only engine symbol.
+@ffi.Native<ffi.UnsignedInt Function()>(symbol: 'gtk_get_major_version')
+external int _gtkGetMajorVersion();
 
-  @ffi.Double()
-  external double green;
-
-  @ffi.Double()
-  external double blue;
-
-  @ffi.Double()
-  external double alpha;
-}
+final int _gtkMajorVersion = _gtkGetMajorVersion();
 
 /// Wraps FlView.
 class _FlView extends _GtkWidget {
@@ -1750,14 +1739,21 @@ class _FlView extends _GtkWidget {
 
   /// Sets the color drawn behind the Flutter contents.
   void setBackgroundColor(Color color) {
-    final ffi.Pointer<_GdkRGBA> rgba = _gMalloc0(ffi.sizeOf<_GdkRGBA>()).cast<_GdkRGBA>();
-    rgba.ref
-      ..red = color.r
-      ..green = color.g
-      ..blue = color.b
-      ..alpha = color.a;
-    _flViewSetBackgroundColor(instance, rgba);
-    _gFree(rgba);
+    final ffi.Pointer<ffi.Void> rgba = _gMalloc0(linuxWindowBackgroundColorSize(_gtkMajorVersion))
+        .cast<ffi.Void>();
+    try {
+      writeLinuxWindowBackgroundColor(
+        rgba,
+        gtkMajorVersion: _gtkMajorVersion,
+        red: color.r,
+        green: color.g,
+        blue: color.b,
+        alpha: color.a,
+      );
+      _flViewSetBackgroundColor(instance, rgba);
+    } finally {
+      _gFree(rgba.cast());
+    }
   }
 
   @ffi.Native<ffi.Pointer<ffi.NativeType> Function(ffi.Pointer<ffi.NativeType>)>(
@@ -1777,12 +1773,12 @@ class _FlView extends _GtkWidget {
   @ffi.Native<ffi.Int64 Function(ffi.Pointer<ffi.NativeType>)>(symbol: 'fl_view_get_id')
   external static int _flViewGetId(ffi.Pointer<ffi.NativeType> view);
 
-  @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.NativeType>, ffi.Pointer<_GdkRGBA>)>(
+  @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.NativeType>, ffi.Pointer<ffi.Void>)>(
     symbol: 'fl_view_set_background_color',
   )
   external static void _flViewSetBackgroundColor(
     ffi.Pointer<ffi.NativeType> view,
-    ffi.Pointer<_GdkRGBA> color,
+    ffi.Pointer<ffi.Void> color,
   );
 }
 

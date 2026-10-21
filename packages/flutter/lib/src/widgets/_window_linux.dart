@@ -24,6 +24,8 @@ import 'package:flutter/rendering.dart';
 
 import '../foundation/_features.dart';
 import '_window.dart';
+import '_window_linux_color.dart';
+import '_window_linux_native.dart';
 import '_window_positioner.dart';
 import 'binding.dart';
 
@@ -225,8 +227,7 @@ class WindowingOwnerLinux extends WindowingOwner {
 /// {@macro flutter.widgets.windowing.experimental}
 @internal
 class LinuxWindowRegistrar {
-  final Map<int, _GtkWindow> _windows = <int, _GtkWindow>{};
-  final Map<int, _FlView> _views = <int, _FlView>{};
+  final LinuxWindowNativeRegistry _registry = LinuxWindowNativeRegistry();
 
   /// Registers the native window and view backing the window identified by
   /// [viewId].
@@ -235,6 +236,13 @@ class LinuxWindowRegistrar {
   /// [GtkWindow](https://docs.gtk.org/gtk3/class.Window.html) and the
   /// [viewHandle] must be a pointer to an
   /// [FlView](https://github.com/flutter/flutter/blob/main/engine/src/flutter/shell/platform/linux/public/flutter_linux/fl_view.h).
+  ///
+  /// This contract is specific to the GTK3 implementation: a generic native
+  /// popup host is not necessarily a GtkWindow. For example, GTK4's GtkPopover
+  /// is a GtkWidget with its own native surface, but is not a GtkWindow.
+  /// Use [registerPopover] for those hosts instead of passing a different
+  /// widget type through [windowHandle]. GTK3 window operations still require
+  /// a GtkWindow parent.
   ///
   /// The handles must remain valid until the window is unregistered via
   /// [unregister].
@@ -246,8 +254,26 @@ class LinuxWindowRegistrar {
     required ffi.Pointer<ffi.Void> windowHandle,
     required ffi.Pointer<ffi.Void> viewHandle,
   }) {
-    _windows[viewId] = _GtkWindow.fromHandle(windowHandle);
-    _views[viewId] = _FlView.fromHandle(viewHandle);
+    _registry.registerWindow(viewId: viewId, windowHandle: windowHandle, viewHandle: viewHandle);
+  }
+
+  /// Registers a view hosted by a GtkPopover rather than a GtkWindow.
+  ///
+  /// The handles are borrowed and must remain valid until [unregister]. This
+  /// replaces any previous registration for [viewId], including a GtkWindow.
+  /// A popover is never exposed to operations that require a GtkWindow.
+  ///
+  /// This supports recording non-window hosts, not creating GTK4 popups or
+  /// using a popover as a parent for GTK3 dialog and popup controllers.
+  ///
+  /// {@macro flutter.widgets.windowing.experimental}
+  @internal
+  void registerPopover({
+    required int viewId,
+    required ffi.Pointer<ffi.Void> popoverHandle,
+    required ffi.Pointer<ffi.Void> viewHandle,
+  }) {
+    _registry.registerPopover(viewId: viewId, popoverHandle: popoverHandle, viewHandle: viewHandle);
   }
 
   /// Removes any native window and view registered for [viewId].
@@ -258,13 +284,18 @@ class LinuxWindowRegistrar {
   /// {@macro flutter.widgets.windowing.experimental}
   @internal
   void unregister(int viewId) {
-    _windows.remove(viewId);
-    _views.remove(viewId);
+    _registry.unregister(viewId);
   }
 
-  _GtkWindow? _windowForViewId(int viewId) => _windows[viewId];
+  _GtkWindow? _windowForViewId(int viewId) {
+    final ffi.Pointer<ffi.Void>? handle = _registry.windowHandleForViewId(viewId);
+    return handle == null ? null : _GtkWindow.fromHandle(handle);
+  }
 
-  _FlView? _viewForViewId(int viewId) => _views[viewId];
+  _FlView? _viewForViewId(int viewId) {
+    final ffi.Pointer<ffi.Void>? handle = _registry.viewHandleForViewId(viewId);
+    return handle == null ? null : _FlView.fromHandle(handle);
+  }
 }
 
 /// The edge of a window to resize when dragging with a pointer.
@@ -1662,20 +1693,12 @@ class _FlEngine extends _GObject {
   factory _FlEngine.current() => _FlEngine(WidgetsBinding.instance.platformDispatcher.engineId!);
 }
 
-/// Matches the GdkRGBA struct in gdk/gdkrgba.h.
-final class _GdkRGBA extends ffi.Struct {
-  @ffi.Double()
-  external double red;
+// GTK3 and GTK4 both export this function. Do not infer the native GdkRGBA
+// layout from the Dart package version or from a GTK4-only engine symbol.
+@ffi.Native<ffi.UnsignedInt Function()>(symbol: 'gtk_get_major_version')
+external int _gtkGetMajorVersion();
 
-  @ffi.Double()
-  external double green;
-
-  @ffi.Double()
-  external double blue;
-
-  @ffi.Double()
-  external double alpha;
-}
+final int _gtkMajorVersion = _gtkGetMajorVersion();
 
 /// Wraps FlView.
 class _FlView extends _GtkWidget {
@@ -1697,14 +1720,21 @@ class _FlView extends _GtkWidget {
 
   /// Sets the color drawn behind the Flutter contents.
   void setBackgroundColor(Color color) {
-    final ffi.Pointer<_GdkRGBA> rgba = _gMalloc0(ffi.sizeOf<_GdkRGBA>()).cast<_GdkRGBA>();
-    rgba.ref
-      ..red = color.r
-      ..green = color.g
-      ..blue = color.b
-      ..alpha = color.a;
-    _flViewSetBackgroundColor(instance, rgba);
-    _gFree(rgba);
+    final ffi.Pointer<ffi.Void> rgba = _gMalloc0(linuxWindowBackgroundColorSize(_gtkMajorVersion))
+        .cast<ffi.Void>();
+    try {
+      writeLinuxWindowBackgroundColor(
+        rgba,
+        gtkMajorVersion: _gtkMajorVersion,
+        red: color.r,
+        green: color.g,
+        blue: color.b,
+        alpha: color.a,
+      );
+      _flViewSetBackgroundColor(instance, rgba);
+    } finally {
+      _gFree(rgba.cast());
+    }
   }
 
   @ffi.Native<ffi.Pointer<ffi.NativeType> Function(ffi.Pointer<ffi.NativeType>)>(
@@ -1724,12 +1754,12 @@ class _FlView extends _GtkWidget {
   @ffi.Native<ffi.Int64 Function(ffi.Pointer<ffi.NativeType>)>(symbol: 'fl_view_get_id')
   external static int _flViewGetId(ffi.Pointer<ffi.NativeType> view);
 
-  @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.NativeType>, ffi.Pointer<_GdkRGBA>)>(
+  @ffi.Native<ffi.Void Function(ffi.Pointer<ffi.NativeType>, ffi.Pointer<ffi.Void>)>(
     symbol: 'fl_view_set_background_color',
   )
   external static void _flViewSetBackgroundColor(
     ffi.Pointer<ffi.NativeType> view,
-    ffi.Pointer<_GdkRGBA> color,
+    ffi.Pointer<ffi.Void> color,
   );
 }
 

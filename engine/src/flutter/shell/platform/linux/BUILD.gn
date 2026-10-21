@@ -389,3 +389,36 @@ zip_bundle("flutter_gtk") {
   ]
   files = tmp_files
 }
+
+# Native resource lifecycle tests; do not link mock_gtk or mock_wayland.
+executable("flutter_linux_gtk3_frame_callback_tests") {
+  testonly = true
+  sources = [
+    "fl_view_renderer_subsurface_native_test.cc",
+    "testing/fl_test_gtk_logs.cc",
+    "testing/fl_test_gtk_logs.h",
+    "testing/linux_test.cc",
+    "testing/linux_test.h",
+    "testing/mock_engine.cc",
+  ]
+  configs += [
+    "//flutter/shell/platform/linux/config:gtk",
+    "//flutter/shell/platform/linux/config:epoxy",
+    "//flutter/shell/platform/linux/config:wayland_egl",
+    "//flutter/shell/platform/linux/config:wayland_client",
+  ]
+  defines = [
+    "FLUTTER_ENGINE_NO_PROTOTYPES",
+    "FLUTTER_TEST_NATIVE_GTK",
+    "FLUTTER_LINUX_COMPILATION",
+  ]
+  deps = [
+    ":flutter_linux_fixtures",
+    ":flutter_linux_gschemas",
+    ":flutter_linux_sources",
+    "//flutter/runtime:libdart",
+    "//flutter/shell/platform/embedder:embedder_headers",
+    "//flutter/shell/platform/embedder:embedder_test_utils",
+    "//flutter/testing",
+  ]
+}

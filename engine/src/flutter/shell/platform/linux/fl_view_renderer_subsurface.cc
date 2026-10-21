@@ -10,6 +10,7 @@
 #include "flutter/shell/platform/linux/fl_compositor_opengl.h"
 #include "flutter/shell/platform/linux/fl_engine_private.h"
 #include "flutter/shell/platform/linux/fl_framebuffer.h"
+#include "flutter/shell/platform/linux/fl_gtk3_runtime_api.h"
 #include "flutter/shell/platform/linux/fl_opengl_manager.h"
 #include "flutter/shell/platform/linux/fl_subsurface.h"
 #include "flutter/shell/platform/linux/fl_subsurface_egl.h"
@@ -37,6 +38,13 @@ struct _FlViewRendererSubsurface {
   // the same address.
   struct wl_surface* parent_surface;
   uint32_t parent_surface_id;
+
+  // Experimental GDK callback registration, accessed only on the GTK thread.
+  // Keep the exact window alive until its child is unregistered. Hiding the
+  // window can destroy its native surface even while this reference is held.
+  gboolean frame_callbacks_enabled;
+  GdkWindow* frame_callback_window;
+  struct wl_surface* frame_callback_surface;
 
   // Manages the EGL context and surface used to present frames to the
   // subsurface.
@@ -131,6 +139,49 @@ static void update_subsurface_position(FlViewRendererSubsurface* self) {
   fl_subsurface_set_position(self->subsurface, x, y);
 }
 
+// Unregister before releasing the child. GTK's remove API only removes the
+// child from the GdkWindow implementation's table; it does not access the
+// parent's native surface, which may already have disappeared during hide.
+// The retained GdkWindow keeps that table alive. Must run on the GTK thread.
+static void unregister_frame_callback_surface(FlViewRendererSubsurface* self) {
+  if (self->frame_callback_window == nullptr) {
+    return;
+  }
+  fl_gtk3_runtime_api_get()->RemoveFrameCallbackSurface(
+      self->frame_callback_window, self->frame_callback_surface);
+  g_debug("GTK3 child frame callbacks: unregistered");
+  self->frame_callback_surface = nullptr;
+  g_clear_object(&self->frame_callback_window);
+}
+
+// Called on the GTK thread with frame_mutex held. Register only a ready child
+// of the current Wayland window. The raster thread never calls into GDK here.
+static void register_frame_callback_surface(FlViewRendererSubsurface* self) {
+  if (!self->frame_callbacks_enabled ||
+      !gtk_widget_get_mapped(GTK_WIDGET(self)) || self->subsurface == nullptr ||
+      self->egl == nullptr || !fl_subsurface_egl_is_ready(self->egl)) {
+    return;
+  }
+  GdkWindow* window =
+      gtk_widget_get_window(gtk_widget_get_toplevel(GTK_WIDGET(self)));
+  if (window == nullptr || !GDK_IS_WAYLAND_WINDOW(window) ||
+      gdk_window_is_destroyed(window) ||
+      gdk_wayland_window_get_wl_surface(window) != self->parent_surface) {
+    return;
+  }
+  struct wl_surface* surface = fl_subsurface_get_surface(self->subsurface);
+  if (window == self->frame_callback_window &&
+      surface == self->frame_callback_surface) {
+    return;
+  }
+  unregister_frame_callback_surface(self);
+  if (fl_gtk3_runtime_api_get()->AddFrameCallbackSurface(window, surface)) {
+    self->frame_callback_window = GDK_WINDOW(g_object_ref(window));
+    self->frame_callback_surface = surface;
+    g_debug("GTK3 child frame callbacks: registered (experimental)");
+  }
+}
+
 // Make a subsurface on @parent_surface and an EGL context that presents frames
 // to it. Must be called with the frame mutex held, as the raster thread
 // presents to these objects.
@@ -146,6 +197,9 @@ static void create_subsurface(FlViewRendererSubsurface* self,
 
   self->subsurface =
       fl_wayland_display_create_subsurface(wayland_display, parent_surface);
+  if (self->subsurface == nullptr) {
+    return;
+  }
   update_subsurface_position(self);
 
   GtkAllocation allocation;
@@ -153,6 +207,7 @@ static void create_subsurface(FlViewRendererSubsurface* self,
   self->egl = fl_subsurface_egl_new(
       fl_engine_get_opengl_manager(self->engine), self->subsurface,
       allocation.width, allocation.height, gtk_widget_get_scale_factor(widget));
+  register_frame_callback_surface(self);
 }
 
 // GTK destroys the window's Wayland surface when it is hidden and makes a new
@@ -169,6 +224,10 @@ static void update_parent_surface(FlViewRendererSubsurface* self) {
   uint32_t parent_surface_id = get_surface_id(parent_surface);
   if (parent_surface == self->parent_surface &&
       parent_surface_id == self->parent_surface_id) {
+    // Mapping a previously hidden child can reuse the same parent surface.
+    g_mutex_lock(&self->frame_mutex);
+    register_frame_callback_surface(self);
+    g_mutex_unlock(&self->frame_mutex);
     return;
   }
 
@@ -176,6 +235,7 @@ static void update_parent_surface(FlViewRendererSubsurface* self) {
   // in which case there is nothing to replace it with until the window is
   // shown again.
   g_mutex_lock(&self->frame_mutex);
+  unregister_frame_callback_surface(self);
   g_clear_object(&self->egl);
   g_clear_object(&self->subsurface);
   self->parent_surface = parent_surface;
@@ -192,6 +252,12 @@ static void update_parent_surface(FlViewRendererSubsurface* self) {
   // The new subsurface has nothing in it, so ask for the frame to be rendered
   // again.
   fl_engine_schedule_frame(self->engine);
+}
+
+// GtkWindow maps its children before recreating its own Wayland surface.
+// Recheck after the toplevel's default map handler, when the parent is ready.
+static void parent_map_cb(FlViewRendererSubsurface* self) {
+  update_parent_surface(self);
 }
 
 // Redraw the view from the GTK thread.
@@ -240,6 +306,12 @@ static void fl_view_renderer_subsurface_realize(GtkWidget* widget) {
   self->compositor =
       fl_compositor_opengl_new(fl_engine_get_opengl_manager(self->engine));
 
+  if (self->frame_callbacks_enabled &&
+      fl_gtk3_runtime_api_get()->SupportsFrameCallbackSurfaces()) {
+    g_signal_connect_object(gtk_widget_get_toplevel(widget), "map",
+                            G_CALLBACK(parent_map_cb), self, G_CONNECT_SWAPPED);
+  }
+
   // Create a subsurface on the toplevel's surface. This asks for a frame, as
   // any rendered before this point were dropped.
   update_parent_surface(self);
@@ -249,11 +321,16 @@ static void fl_view_renderer_subsurface_realize(GtkWidget* widget) {
 static void fl_view_renderer_subsurface_unrealize(GtkWidget* widget) {
   FlViewRendererSubsurface* self = FL_VIEW_RENDERER_SUBSURFACE(widget);
 
+  g_signal_handlers_disconnect_by_func(
+      gtk_widget_get_toplevel(widget),
+      reinterpret_cast<gpointer>(parent_map_cb), self);
+
   // Hold frame_mutex while releasing these objects so the raster thread cannot
   // be using them in present_layers concurrently. The unref may run their
   // destructors, so the calling code (here) owns the locking rather than the
   // objects themselves.
   g_mutex_lock(&self->frame_mutex);
+  unregister_frame_callback_surface(self);
   g_clear_object(&self->compositor);
 
   // The EGL context and surface are released here; the EGL display is owned by
@@ -272,6 +349,15 @@ static void fl_view_renderer_subsurface_map(GtkWidget* widget) {
   GTK_WIDGET_CLASS(fl_view_renderer_subsurface_parent_class)->map(widget);
 
   update_parent_surface(FL_VIEW_RENDERER_SUBSURFACE(widget));
+}
+
+// Implements GtkWidget::unmap. Stop requesting callbacks for a hidden child.
+static void fl_view_renderer_subsurface_unmap(GtkWidget* widget) {
+  FlViewRendererSubsurface* self = FL_VIEW_RENDERER_SUBSURFACE(widget);
+  g_mutex_lock(&self->frame_mutex);
+  unregister_frame_callback_surface(self);
+  g_mutex_unlock(&self->frame_mutex);
+  GTK_WIDGET_CLASS(fl_view_renderer_subsurface_parent_class)->unmap(widget);
 }
 
 // Implements GtkWidget::draw.
@@ -433,9 +519,11 @@ static void fl_view_renderer_subsurface_present_layers(
 static void fl_view_renderer_subsurface_dispose(GObject* object) {
   FlViewRendererSubsurface* self = FL_VIEW_RENDERER_SUBSURFACE(object);
 
+  g_mutex_lock(&self->frame_mutex);
+  unregister_frame_callback_surface(self);
+  g_mutex_unlock(&self->frame_mutex);
   g_clear_object(&self->engine);
   g_clear_object(&self->task_runner);
-  g_mutex_clear(&self->frame_mutex);
 
   G_OBJECT_CLASS(fl_view_renderer_subsurface_parent_class)->dispose(object);
 }
@@ -450,6 +538,8 @@ static void fl_view_renderer_subsurface_finalize(GObject* object) {
   // presenting.
   g_clear_object(&self->compositor);
   g_clear_object(&self->framebuffer);
+  // Late present_layers calls still lock the mutex after widget destruction.
+  g_mutex_clear(&self->frame_mutex);
 
   G_OBJECT_CLASS(fl_view_renderer_subsurface_parent_class)->finalize(object);
 }
@@ -464,6 +554,7 @@ static void fl_view_renderer_subsurface_class_init(
   widget_class->realize = fl_view_renderer_subsurface_realize;
   widget_class->unrealize = fl_view_renderer_subsurface_unrealize;
   widget_class->map = fl_view_renderer_subsurface_map;
+  widget_class->unmap = fl_view_renderer_subsurface_unmap;
   widget_class->draw = fl_view_renderer_subsurface_draw;
   widget_class->size_allocate = fl_view_renderer_subsurface_size_allocate;
 
@@ -473,6 +564,14 @@ static void fl_view_renderer_subsurface_class_init(
 
 static void fl_view_renderer_subsurface_init(FlViewRendererSubsurface* self) {
   g_mutex_init(&self->frame_mutex);
+  self->frame_callbacks_enabled =
+      g_strcmp0(g_getenv("FLUTTER_GTK3_WAYLAND_FRAME_CALLBACKS"), "1") == 0;
+  if (self->frame_callbacks_enabled) {
+    g_debug("GTK3 child frame callbacks: capability %s",
+            fl_gtk3_runtime_api_get()->SupportsFrameCallbackSurfaces()
+                ? "available"
+                : "unavailable");
+  }
 
   // Connected after the default handler so this runs once FlView has sent the
   // new window metrics to the engine, allowing the frame of the new size to be

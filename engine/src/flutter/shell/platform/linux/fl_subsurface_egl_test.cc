@@ -73,6 +73,7 @@ TEST_F(FlSubsurfaceEGLTest, Create) {
 
   g_autoptr(FlSubsurfaceEGL) egl = CreateEGL();
   EXPECT_NE(egl, nullptr);
+  EXPECT_TRUE(fl_subsurface_egl_is_ready(egl));
   EXPECT_FALSE(HasReceivedLogLevel(G_LOG_LEVEL_WARNING));
 }
 
@@ -83,6 +84,7 @@ TEST_F(FlSubsurfaceEGLTest, CreateFailure) {
 
   g_autoptr(FlSubsurfaceEGL) egl = CreateEGL();
   EXPECT_NE(egl, nullptr);
+  EXPECT_FALSE(fl_subsurface_egl_is_ready(egl));
   EXPECT_TRUE(HasReceivedLogLevel(G_LOG_LEVEL_WARNING));
 }
 
